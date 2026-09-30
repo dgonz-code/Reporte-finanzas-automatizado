@@ -59,6 +59,13 @@ def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bo
         cuenta = _load_account(cuenta_pdf, cfg, client, log, use_llm)
         movs += [{**m, "fuente": "cuenta_corriente"} for m in cuenta["movimientos"]]
 
+    if sheets:
+        from . import sheets_client
+
+        n = categorizer.aplicar_correcciones(cfg, sheets_client.pull_corrections(cfg))
+        if n:
+            print(f"{n} correccion(es) aprendidas desde la pestana 'Clasificar' de Google Sheets.")
+
     pendientes = categorizer.categorize(movs, cfg, client, log, use_llm, use_web=cfg.use_web, titular=cuenta and cuenta.get("titular"))
     if preguntar and pendientes:
         if categorizer.es_interactivo():
@@ -88,12 +95,14 @@ def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bo
         from . import sheets_client
 
         print("Google Sheets:", sheets_client.save_month(cfg, periodo_iso, movs, agg))
+        sheets_client.push_comercios(cfg, categorizer.comercios_resumen(movs, cfg, pendientes), categorizer.CATEGORIAS)
     print(f"Ingresos {agg['ingresos']:,.0f} | Gastos {agg['gastos']:,.0f} (cuenta {agg['gastos_cuenta_corriente']:,.0f} + tarjeta {agg['gastos_tarjeta']:,.0f})")
     for k, v in agg["conciliacion"].items():
         print(f"Conciliacion {k}: {'OK' if not v else f'DIFERENCIA {v:,.0f} -> revisar extraccion'}")
     if pendientes:
+        donde = "la pestana 'Clasificar' de Google Sheets (columna corregir_a)" if sheets else "python -m reporte.clasificar"
         print(f"{len(pendientes)} clasificaciones con duda (total ${sum(p['total'] for p in pendientes):,.0f}). "
-              "Responde con: python -m reporte.clasificar")
+              f"Respondelas en {donde} y vuelve a correr el reporte.")
     print(log.summary(cfg))
 
     if send:

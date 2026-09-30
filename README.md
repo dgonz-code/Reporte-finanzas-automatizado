@@ -48,6 +48,26 @@ PYTHONPATH=src python -m reporte.clasificar                   # responde las dud
 
 La cuenta corriente se baja sola de Gmail (remitente `cartolas.info@scotiabank.cl`). Sin Gmail configurado, toma el PDF más reciente de `entrada/`. También puedes pasar archivos a mano con `--cuenta` y `--tarjeta`.
 
+## Cómo enseñarle y corregirle las categorías
+
+El agente aprende de ti: lo que tú decides **manda sobre las reglas y la IA**, y no se vuelve a preguntar.
+
+**En Google Sheets (lo más cómodo)** — corre con `--sheets` y abre la pestaña **`Clasificar`**:
+
+| estado | comercio | monto_mes | categoria_actual | fuente | **corregir_a** |
+|---|---|---|---|---|---|
+| POR CONFIRMAR | TIENDA RARA SPA | 50.000 | Otros | sin clasificar | *(elige aquí)* |
+| ok | UNIMARC EL SALVADOR | 7.281 | Supermercado | regla | |
+
+- Arriba aparecen los **POR CONFIRMAR** (los que el agente no supo o dudó), ordenados por monto.
+- Para **enseñar** o **corregir** cualquiera (también los que dicen `ok`): haz clic en su celda de `corregir_a` y elige la categoría del desplegable.
+- Vuelve a correr `python -m reporte.main --sheets`. Al partir, el agente lee tus elecciones, las guarda como decisión tuya y el reporte ya sale con ellas. La columna `fuente` pasará a decir `tu`.
+- Las transferencias entre personas se agrupan por RUT: una respuesta vale para todas las del mismo RUT (por ejemplo, marca tus traspasos propios como `Transferencia propia (interno)` y dejan de contar como ingreso/gasto).
+
+**Por consola (sin Google)** — `python -m reporte.main --preguntar` te va consultando una por una; o `python -m reporte.clasificar` para las que quedaron pendientes.
+
+Para agregar una regla a mano (comercios que quieres resolver siempre igual, sin preguntar), edita `src/reporte/reglas_categorias.json`.
+
 ## ¿Usa IA? Tú decides (`REPORTE_LLM`)
 
 **Por defecto no.** Leer las cartolas, calcular totales, conciliar y armar el reporte es todo código: $0 y sin enviar nada a nadie. La IA solo sirve para dos cosas opcionales: adivinar la categoría de comercios que no reconocen las reglas y redactar el resumen.
@@ -62,7 +82,7 @@ Con `claude-code` el agente desactiva las herramientas de Claude Code y usa un p
 
 ## Google Sheets
 
-`--sheets` guarda cada mes en una planilla con 4 pestañas: `Movimientos`, `Resumen` (una fila por mes), `Categorias` (formato largo, ideal para tablas dinámicas y gráficos de tendencia) y `Presupuesto` (la llenas tú: categoría y monto mensual). Volver a correr un mes reemplaza sus filas, no las duplica.
+`--sheets` guarda cada mes en una planilla con 5 pestañas: `Movimientos`, `Resumen` (una fila por mes), `Categorias` (formato largo, ideal para tablas dinámicas y gráficos de tendencia) `Presupuesto` (la llenas tú: categoría y monto mensual) y `Clasificar` (donde enseñas y corriges, ver arriba). Volver a correr un mes reemplaza sus filas, no las duplica.
 
 Configuración única: en Google Cloud crea credenciales OAuth tipo "Aplicación de escritorio", habilita **Gmail API** y **Google Sheets API**, y guarda el archivo como `credentials.json`. La primera ejecución abre el navegador para autorizar (si ya tenías un `token.json` de antes, bórralo: ahora pide el permiso de Sheets).
 

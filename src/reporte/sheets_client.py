@@ -6,6 +6,8 @@ Pestanas:
   Categorias   formato largo: periodo, categoria, gasto   (ideal para tablas dinamicas y graficos)
   Presupuesto  categoria, presupuesto mensual    (la llenas tu; queda lista para comparar)
 
+  Clasificar   un renglon por comercio: ahi ENSENAS y CORRIGES eligiendo la categoria en la columna 'corregir_a'
+
 Es idempotente: volver a correr el mismo mes reemplaza sus filas, no las duplica.
 """
 from .config import Config
@@ -41,9 +43,13 @@ def ensure_spreadsheet(svc, cfg: Config) -> str:
     return sid
 
 
+CLASIFICAR = "Clasificar"
+CLASIFICAR_HEADER = ["estado", "comercio", "monto_mes", "categoria_actual", "fuente", "corregir_a", "clave"]
+
+
 def _ensure_tabs(svc, sid: str) -> None:
     have = {s["properties"]["title"] for s in svc.spreadsheets().get(spreadsheetId=sid).execute()["sheets"]}
-    missing = [t for t in TABS if t not in have]
+    missing = [t for t in [*TABS, CLASIFICAR] if t not in have]
     if missing:
         svc.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": [{"addSheet": {"properties": {"title": t}}} for t in missing]}).execute()
 
@@ -77,3 +83,37 @@ def save_month(cfg: Config, periodo: str, movs: list[dict], agg: dict, svc=None)
         svc.spreadsheets().values().update(spreadsheetId=sid, range="Presupuesto!A1", valueInputOption="RAW",
                                            body={"values": [TABS["Presupuesto"]]}).execute()
     return f"https://docs.google.com/spreadsheets/d/{sid}"
+
+
+def pull_corrections(cfg: Config, svc=None) -> list[dict]:
+    """Lee lo que elegiste en la columna 'corregir_a' de la pestana Clasificar (antes de clasificar el mes)."""
+    sid = cfg.sheet_id or ((cfg.data_dir / "sheet_id.txt").read_text().strip() if (cfg.data_dir / "sheet_id.txt").exists() else None)
+    if not sid:
+        return []
+    svc = svc or _service(cfg)
+    rows = svc.spreadsheets().values().get(spreadsheetId=sid, range=f"{CLASIFICAR}!A:G").execute().get("values", [])
+    out = []
+    for r in rows[1:]:
+        r = r + [""] * (len(CLASIFICAR_HEADER) - len(r))
+        d = dict(zip(CLASIFICAR_HEADER, r))
+        if d["corregir_a"].strip():
+            out.append({"clave": d["clave"], "comercio": d["comercio"], "corregir_a": d["corregir_a"].strip()})
+    return out
+
+
+def push_comercios(cfg: Config, comercios: list[dict], categorias: list[str], svc=None) -> None:
+    """Reescribe la pestana Clasificar con el estado actual y deja un desplegable de categorias en 'corregir_a'."""
+    svc = svc or _service(cfg)
+    sid = ensure_spreadsheet(svc, cfg)
+    _ensure_tabs(svc, sid)
+    table = [CLASIFICAR_HEADER] + [[c["estado"], c["comercio"], c["monto"], c["categoria"], c["fuente"], "", c["clave"]] for c in comercios]
+    svc.spreadsheets().values().clear(spreadsheetId=sid, range=f"{CLASIFICAR}!A:G").execute()
+    svc.spreadsheets().values().update(spreadsheetId=sid, range=f"{CLASIFICAR}!A1", valueInputOption="RAW", body={"values": table}).execute()
+    tab = next(s["properties"] for s in svc.spreadsheets().get(spreadsheetId=sid).execute()["sheets"] if s["properties"]["title"] == CLASIFICAR)
+    svc.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": [{
+        "setDataValidation": {
+            "range": {"sheetId": tab["sheetId"], "startRowIndex": 1, "endRowIndex": max(len(table), 2), "startColumnIndex": 5, "endColumnIndex": 6},
+            "rule": {"condition": {"type": "ONE_OF_LIST", "values": [{"userEnteredValue": c} for c in categorias]},
+                     "showCustomUi": True, "strict": True},
+        }
+    }]}).execute()

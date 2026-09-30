@@ -226,3 +226,37 @@ def preguntar(cfg: Config, pendientes: list[dict], movs: list[dict] | None = Non
 
 def es_interactivo() -> bool:
     return sys.stdin.isatty()
+
+
+def comercios_resumen(movs: list[dict], cfg: Config, pendientes: list[dict]) -> list[dict]:
+    """Un renglon por comercio (para la pestana 'Clasificar'): estado, categoria actual y quien la decidio."""
+    rules = json.loads(RULES_FILE.read_text())["reglas"]
+    store = Clasificaciones(cfg.data_dir / "clasificaciones.db")
+    dudas = {p["clave"] for p in pendientes}
+    grupos: dict[str, list[dict]] = {}
+    for m in movs:
+        grupos.setdefault(key_of(m["descripcion"]), []).append(m)
+    out = []
+    for key, ms in grupos.items():
+        row = store.get(key)
+        if row and row["fuente"] == "usuario":
+            fuente = "tu"
+        elif _by_rules(key, rules) or _by_rules(norm(ms[0]["descripcion"]), rules):
+            fuente = "regla"
+        else:
+            fuente = {"ia": "IA", "web": "web"}.get(row["fuente"], "sin clasificar") if row else "sin clasificar"
+        out.append({"clave": key, "comercio": ms[0]["descripcion"], "monto": sum(abs(m["monto"]) for m in ms),
+                    "categoria": ms[0]["categoria"], "fuente": fuente, "estado": "POR CONFIRMAR" if key in dudas else "ok"})
+    out.sort(key=lambda r: (r["estado"] != "POR CONFIRMAR", -r["monto"]))
+    return out
+
+
+def aplicar_correcciones(cfg: Config, filas: list[dict]) -> int:
+    """Guarda como 'usuario' las categorias que elegiste en la planilla. Ignora valores que no sean una categoria valida."""
+    store = Clasificaciones(cfg.data_dir / "clasificaciones.db")
+    n = 0
+    for f in filas:
+        if f["corregir_a"] in CATEGORIAS and f["clave"]:
+            store.put(f["clave"], f["corregir_a"], "usuario", 1.0, "corregido en Google Sheets", f.get("comercio", ""))
+            n += 1
+    return n

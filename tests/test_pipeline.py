@@ -218,9 +218,10 @@ class FakeSheets:
                 return V()
 
             def get(self_inner, spreadsheetId):
-                return SimpleNamespace(execute=lambda: {"sheets": [{"properties": {"title": t}} for t in outer.tabs] or [{"properties": {"title": "x"}}]})
+                return SimpleNamespace(execute=lambda: {"sheets": [{"properties": {"title": t, "sheetId": i}} for i, t in enumerate(outer.tabs)] or [{"properties": {"title": "x", "sheetId": 99}}]})
 
             def batchUpdate(self_inner, spreadsheetId, body):
+                outer.requests = getattr(outer, "requests", []) + body["requests"]
                 return SimpleNamespace(execute=lambda: None)
 
         return S()
@@ -276,3 +277,34 @@ def test_no_web_search_with_claude_code_backend(tmp_path, monkeypatch):
     movs = [{"descripcion": "TIENDA RARA", "monto": -90000}]
     pend = categorizer.categorize(movs, c, client, UsageLog(), use_web=True)
     assert client.web_calls == [] and pend  # sin web; queda para preguntarte
+
+
+def test_teach_and_correct_from_google_sheets(tmp_path):
+    """Ciclo completo: el agente publica los comercios, tu eliges una categoria en la planilla, la siguiente corrida la aprende."""
+    from reporte import sheets_client
+
+    c = Config(llm="none", data_dir=tmp_path / "data", sheet_id="SID")
+    svc = FakeSheets()
+    movs = [{"descripcion": "TIENDA RARA SPA", "monto": -50000, "fuente": "tarjeta_credito"},
+            {"descripcion": "UNIMARC EL SALVADOR", "monto": -7281, "fuente": "tarjeta_credito"}]
+    pend = categorizer.categorize(movs, c, None, UsageLog(), use_llm=False)
+    assert [p["clave"] for p in pend] == ["TIENDA RARA SPA"]
+
+    resumen = categorizer.comercios_resumen(movs, c, pend)
+    assert [r["estado"] for r in resumen] == ["POR CONFIRMAR", "ok"]  # lo dudoso primero
+    sheets_client.push_comercios(c, resumen, categorizer.CATEGORIAS, svc=svc)
+    validation = svc.requests[-1]["setDataValidation"]["rule"]["condition"]
+    assert validation["type"] == "ONE_OF_LIST" and len(validation["values"]) == len(categorizer.CATEGORIAS)
+
+    # tu eliges en la columna 'corregir_a' (F) de la fila de TIENDA RARA, y una opcion invalida en otra
+    tab = svc.tabs["Clasificar"]
+    assert tab[0][5] == "corregir_a"
+    tab[1][5] = "Hogar y ferreteria"
+    tab[2][5] = "categoria inventada"
+
+    filas = sheets_client.pull_corrections(c, svc=svc)
+    assert categorizer.aplicar_correcciones(c, filas) == 1  # la invalida se ignora
+
+    movs2 = [{"descripcion": "TIENDA RARA SPA", "monto": -30000, "fuente": "tarjeta_credito"}]
+    assert categorizer.categorize(movs2, c, None, UsageLog(), use_llm=False) == []
+    assert movs2[0]["categoria"] == "Hogar y ferreteria"  # aprendido: el mes siguiente ya no pregunta
