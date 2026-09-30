@@ -116,15 +116,15 @@ def test_tef_by_rut_own_transfers_and_no_llm(tmp_path):
     c = cfg(tmp_path)
     fake = FakeClient({})
     movs = [
-        {"descripcion": "TEF 19076563-6 David Esteban G", "monto": 250000},
-        {"descripcion": "TEF 19076563-6 David Gonzalez", "monto": -500000},
+        {"descripcion": "TEF 11111111-1 David Esteban G", "monto": 250000},
+        {"descripcion": "TEF 11111111-1 David Gonzalez", "monto": -500000},
         {"descripcion": "TEF 53323574-3 Condominio Luis", "monto": -58104},
     ]
     pend = categorizer.categorize(movs, c, fake, UsageLog(), titular="GONZALEZ MONSALVEZ DAVID ESTEBAN")
     assert movs[0]["categoria"] == movs[1]["categoria"] == "Transferencia propia (interno)"  # mismo RUT, distinto nombre
     assert movs[2]["categoria"] == "Vivienda y cuentas basicas"
     assert not fake.calls
-    assert [p["clave"] for p in pend] == ["TEF 19076563-6"]  # una sola pregunta por RUT
+    assert [p["clave"] for p in pend] == ["TEF 11111111-1"]  # una sola pregunta por RUT
 
 
 def test_preguntar_saves_user_answer(tmp_path, monkeypatch):
