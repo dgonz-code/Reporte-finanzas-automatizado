@@ -388,3 +388,61 @@ def test_recalculo_da_los_mismos_numeros_que_la_primera_corrida(tmp_path):
     r2 = pipeline.recalcular_mes(c, r1.periodo)
     assert (r2.agg["ingresos"], r2.agg["gastos"]) == (r1.agg["ingresos"], r1.agg["gastos"]) == (3249546, 3251336)
     assert pipeline.cargar_comercios(c, r1.periodo)  # la pantalla Clasificar usa el mismo titular
+
+
+# ---------- ejecucion automatica ----------
+def _auto_env(tmp_path, monkeypatch, cuenta_file, enviados):
+    from reporte import ajustes, automatico, mail_client, secrets_store
+
+    c = Config(llm="none", data_dir=tmp_path / "data", output_dir=tmp_path / "out", inbox_dir=tmp_path / "entrada",
+               pdf_password=os.getenv("PDF_PASSWORD"))
+    monkeypatch.setattr(ajustes, "make_config", lambda base=None: c)
+    monkeypatch.setattr(ajustes, "load", lambda cfg: {**ajustes.DEFAULTS, "gmail_email": "yo@gmail.com"})
+    monkeypatch.setattr(secrets_store, "get", lambda n: "clave-app" if n == "gmail_app_password" else None)
+    monkeypatch.setattr(mail_client, "download_statement", lambda *a, **k: cuenta_file())
+    monkeypatch.setattr(mail_client, "send_report", lambda *a, **k: enviados.append(a))
+    avisos = []
+    monkeypatch.setattr(automatico, "notificar", lambda t, x: avisos.append((t, x)))
+    return c, automatico, avisos
+
+
+def test_automatico_avisa_si_falta_la_tarjeta_y_no_envia_nada_a_medias(tmp_path, monkeypatch):
+    enviados = []
+    c, automatico, avisos = _auto_env(tmp_path, monkeypatch, lambda: PDF, enviados)
+    assert automatico.main([]) == 0
+    assert enviados == [] and "falta la tarjeta" in avisos[0][0]
+
+
+def test_automatico_no_hace_nada_si_aun_no_llega_la_cartola(tmp_path, monkeypatch):
+    def no_hay():
+        raise FileNotFoundError("sin correos")
+
+    enviados = []
+    c, automatico, avisos = _auto_env(tmp_path, monkeypatch, no_hay, enviados)
+    assert automatico.main([]) == 0 and enviados == [] and avisos == []
+
+
+@pytest.mark.skipif(not (CARD.exists() and PDF.exists() and os.getenv("PDF_PASSWORD")), reason="requiere las cartolas reales y PDF_PASSWORD")
+def test_automatico_flujo_completo_y_es_idempotente(tmp_path, monkeypatch):
+    import shutil
+
+    enviados = []
+    c, automatico, avisos = _auto_env(tmp_path, monkeypatch, lambda: PDF, enviados)
+    c.inbox_dir.mkdir()
+    shutil.copy(CARD, c.inbox_dir / CARD.name)
+    assert automatico.main([]) == 0
+    assert len(enviados) == 1 and "2026-08" in enviados[0][3]  # asunto del correo
+    assert avisos[-1][0] == "Reporte 2026-08 listo"
+    assert automatico.main([]) == 0 and len(enviados) == 1  # misma cartola: no reenvia
+    assert automatico.main(["--forzar"]) == 0 and len(enviados) == 2
+
+
+def test_launchd_plist_es_valido(tmp_path):
+    import plistlib
+
+    from reporte import launchd
+
+    d = plistlib.loads(plistlib.dumps(launchd.plist_dict("/p/.venv/bin/python", tmp_path)))
+    assert d["ProgramArguments"] == ["/p/.venv/bin/python", "-m", "reporte.automatico"]
+    assert [x["Day"] for x in d["StartCalendarInterval"]] == [2, 3, 4, 5, 6, 7, 8]
+    assert d["EnvironmentVariables"]["PYTHONPATH"].endswith("src")

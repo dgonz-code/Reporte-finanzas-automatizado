@@ -23,6 +23,19 @@ Lee tus cartolas (cuenta corriente PDF + tarjeta de crédito XLS), las clasifica
 
 Tus datos quedan en la carpeta `data/` (ignorada por git).
 
+## Que se ejecute solo cada mes
+
+1. Abre la aplicación una vez con `iniciar.command` (configura Gmail y la clave del PDF en Ajustes).
+2. **Doble clic en `instalar_automatico.command`.** Programa una tarea de macOS (LaunchAgent) que corre del **día 2 al 8 de cada mes, 09:30**, y hace una prueba inmediata sin enviar correo.
+3. Cada mes, solo tienes que **dejar el `.xls` de la tarjeta en la carpeta `entrada/`** de este proyecto. El resto es automático:
+   - baja la cartola de Gmail y toma la tarjeta de `entrada/`;
+   - si falta algo, te avisa con una **notificación de macOS** y **no envía nada a medias**; vuelve a intentarlo al día siguiente;
+   - si ambos archivos son del mismo mes, genera el reporte y **te lo envía por correo**;
+   - no reenvía lo mismo dos veces (se guarda una huella de los archivos procesados).
+4. Las clasificaciones dudosas te las avisa en la notificación y en el correo; las resuelves cuando quieras en la pantalla **Clasificar**.
+
+Notas: el modo desatendido **nunca usa IA** (nadie podría confirmar sus sugerencias). Deja el `.xls` dentro de la carpeta del proyecto y no en *Descargas*: macOS pide permisos especiales para leer esa carpeta desde tareas en segundo plano. El Mac debe estar encendido; si estaba dormido a la hora programada, macOS la ejecuta al despertar. Registro: `data/automatico.log`. Para desactivar: `desinstalar_automatico.command`.
+
 ## ¿Usa IA? Tú decides
 
 **Por defecto no.** Leer las cartolas, calcular, cuadrar y reportar es todo código: gratis y sin enviar nada fuera. La IA solo sirve para sugerir la categoría de comercios desconocidos y redactar el resumen.
