@@ -1,0 +1,9 @@
+anthropic>=1.0
+pdfplumber>=0.11
+reportlab>=4.0
+matplotlib>=3.8
+google-api-python-client>=2.120
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2
+python-dotenv>=1.0
+pytest>=8.0
