@@ -1,10 +1,12 @@
-"""Flujo: cuenta corriente (PDF) + tarjeta (XLS) -> categorias -> reporte PDF -> correo.
+"""Flujo: cuenta corriente (PDF) + tarjeta (XLS) -> categorias -> reporte PDF -> (Google Sheets) -> correo.
+
+Por defecto NO usa IA ($0). Activala con REPORTE_LLM=claude-code (tu plan) o REPORTE_LLM=api (se paga aparte).
 
 Uso:
   python -m reporte.main --cuenta entrada/cartola.pdf --tarjeta entrada/tarjeta.xls --no-send
   python -m reporte.main --cuenta ... --tarjeta ... --preguntar --no-send     # te consulta las dudas
-  python -m reporte.main --tarjeta entrada/tarjeta.xls --sin-llm --no-send    # $0, solo reglas y BBDD
-  python -m reporte.main                                                      # desde Gmail y envia
+  python -m reporte.main --tarjeta entrada/tarjeta.xls --no-send              # sin IA, $0
+  python -m reporte.main --sheets                                             # cuenta desde Gmail, tarjeta desde entrada/
 """
 import argparse
 from pathlib import Path
@@ -37,11 +39,17 @@ def _load_account(path: Path, cfg: Config, client, log: UsageLog, use_llm: bool)
     return analyzer.extract_account(client, cfg, log, account_parser.extract_text(path, cfg.pdf_password))
 
 
-def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bool, use_llm: bool, preguntar: bool = False) -> Path:
+def latest_file(folder: Path, pattern: str) -> Path | None:
+    files = sorted(folder.glob(pattern), key=lambda f: f.stat().st_mtime, reverse=True) if folder.exists() else []
+    return files[0] if files else None
+
+
+def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bool, use_llm: bool,
+        preguntar: bool = False, sheets: bool = False) -> Path:
     if not (cuenta_pdf or tarjeta_xls):
         raise SystemExit("Indica al menos --cuenta o --tarjeta.")
     log = UsageLog()
-    client = anthropic.Anthropic() if use_llm else None
+    client = anthropic.Anthropic() if use_llm and cfg.llm == "api" else None
 
     movs, cuenta, tarjeta = [], None, None
     if tarjeta_xls:
@@ -76,6 +84,10 @@ def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bo
     store.save_month(cfg.data_dir, periodo_iso, movs, agg)
 
     print(f"Reporte: {out}\nDatos guardados en {cfg.data_dir / periodo_iso}")
+    if sheets:
+        from . import sheets_client
+
+        print("Google Sheets:", sheets_client.save_month(cfg, periodo_iso, movs, agg))
     print(f"Ingresos {agg['ingresos']:,.0f} | Gastos {agg['gastos']:,.0f} (cuenta {agg['gastos_cuenta_corriente']:,.0f} + tarjeta {agg['gastos_tarjeta']:,.0f})")
     for k, v in agg["conciliacion"].items():
         print(f"Conciliacion {k}: {'OK' if not v else f'DIFERENCIA {v:,.0f} -> revisar extraccion'}")
@@ -94,20 +106,29 @@ def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bo
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cuenta", type=Path, help="PDF de cuenta corriente (local)")
-    ap.add_argument("--tarjeta", type=Path, help="XLS de tarjeta de credito (local)")
-    ap.add_argument("--no-send", action="store_true")
-    ap.add_argument("--sin-llm", action="store_true", help="Solo reglas, BBDD y parser: costo $0")
+    ap.add_argument("--cuenta", type=Path, help="PDF de cuenta corriente (local). Sin esto se baja de Gmail")
+    ap.add_argument("--tarjeta", type=Path, help="XLS de tarjeta (local). Sin esto se toma el mas reciente de la carpeta de entrada")
+    ap.add_argument("--no-send", action="store_true", help="No enviar el correo")
+    ap.add_argument("--sheets", action="store_true", help="Guardar tambien en Google Sheets")
+    ap.add_argument("--sin-llm", action="store_true", help="Forzar modo sin IA aunque REPORTE_LLM este activo")
     ap.add_argument("--preguntar", action="store_true", help="Pregunta por consola las clasificaciones dudosas")
     args = ap.parse_args()
     cfg = Config()
-    cuenta, tarjeta = args.cuenta, args.tarjeta
-    if not (cuenta or tarjeta):  # modo Gmail
-        from . import gmail_client
 
-        cuenta = gmail_client.download_statement(cfg, cfg.output_dir / "inbox", cfg.gmail_query_cuenta, (".pdf",))
-        tarjeta = gmail_client.download_statement(cfg, cfg.output_dir / "inbox", cfg.gmail_query_tarjeta, (".xls", ".xlsx"))
-    run(cuenta, tarjeta, cfg, send=not args.no_send, use_llm=not args.sin_llm, preguntar=args.preguntar)
+    cuenta, tarjeta = args.cuenta, args.tarjeta
+    if not tarjeta:
+        tarjeta = latest_file(cfg.inbox_dir, cfg.inbox_card_glob)
+        print(f"Tarjeta: {tarjeta}" if tarjeta else f"AVISO: no hay .xls de tarjeta en {cfg.inbox_dir}/ (se sigue solo con la cuenta corriente).")
+    if not cuenta:
+        if cfg.credentials_file.exists() or cfg.token_file.exists():
+            from . import gmail_client
+
+            cuenta = gmail_client.download_statement(cfg, cfg.output_dir / "inbox", cfg.gmail_query_cuenta, (".pdf",))
+        else:
+            cuenta = latest_file(cfg.inbox_dir, "*.pdf")
+            print(f"Sin Gmail configurado; cuenta corriente desde carpeta: {cuenta}")
+    use_llm = cfg.llm != "none" and not args.sin_llm
+    run(cuenta, tarjeta, cfg, send=not args.no_send, use_llm=use_llm, preguntar=args.preguntar, sheets=args.sheets)
 
 
 if __name__ == "__main__":

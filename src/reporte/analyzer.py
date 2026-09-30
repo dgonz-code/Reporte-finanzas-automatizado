@@ -111,16 +111,29 @@ def _clp(x: float) -> str:
 
 
 def basic_insights(agg: dict) -> dict:
-    """Version sin LLM ($0): datos duros, sin redaccion."""
-    top = list(agg["gastos_por_categoria"].items())[:3]
+    """Analisis sin IA ($0): reglas simples sobre los numeros ya calculados."""
+    cats = list(agg["gastos_por_categoria"].items())
+    gastos = agg["gastos"] or 1
+    hallazgos = [f"{k}: {_clp(v)} ({v / gastos:.0%} del gasto)" for k, v in cats[:3]]
+    if agg["mayores_gastos"]:
+        g = agg["mayores_gastos"][0]
+        hallazgos.append(f"Mayor gasto individual: {g['descripcion']} por {_clp(-g['monto'])} el {g['fecha']}.")
+    rec = agg["comercios_recurrentes"]
+    if rec:
+        hallazgos.append(f"{len(rec)} comercios con cargos repetidos en el mes (posibles suscripciones o habitos).")
+    alertas = [f"Conciliacion {k}: diferencia {v}" for k, v in agg["conciliacion"].items() if v]
+    sin_det = sum(agg["gastos_por_categoria"].get(k, 0) for k in ("Pagos digitales sin detalle", "Otros"))
+    if sin_det / gastos > 0.15:
+        alertas.append(f"{_clp(sin_det)} ({sin_det / gastos:.0%}) del gasto no tiene detalle: clasificalo con --preguntar.")
+    prox = [v for k, v in agg["cuotas_por_vencer"].items() if k != "ACTUAL" and v]
+    if prox:
+        alertas.append(f"Ya tienes comprometidos {_clp(prox[0])} en cuotas de tarjeta para el mes siguiente.")
+    if agg["tasa_ahorro"] is not None and agg["tasa_ahorro"] < 0:
+        alertas.append("Gastaste mas de lo que ingreso este mes.")
+    ahorro = f"tasa de ahorro {agg['tasa_ahorro']:.0%}" if agg["tasa_ahorro"] is not None else "sin ingresos registrados"
     return {
-        "resumen_ejecutivo": (
-            f"Ingresos {_clp(agg['ingresos'])}, gastos {_clp(agg['gastos'])}, balance {_clp(agg['balance'])}. "
-            "(Modo sin LLM: sin analisis redactado.)"
-        ),
-        "hallazgos": [f"{k}: {_clp(v)}" for k, v in top],
-        "alertas": [f"Conciliacion {k}: diferencia {v}" for k, v in agg["conciliacion"].items() if v],
-        "recomendaciones": [],
+        "resumen_ejecutivo": f"Ingresos {_clp(agg['ingresos'])}, gastos {_clp(agg['gastos'])}, balance {_clp(agg['balance'])} ({ahorro}).",
+        "hallazgos": hallazgos, "alertas": alertas, "recomendaciones": [],
     }
 
 

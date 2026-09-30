@@ -4,31 +4,14 @@ import mimetypes
 from email.message import EmailMessage
 from pathlib import Path
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from . import google_auth
 from .config import Config
-
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-]
 
 
 def _service(cfg: Config):
-    creds = None
-    if cfg.token_file.exists():
-        creds = Credentials.from_authorized_user_file(str(cfg.token_file), SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(str(cfg.credentials_file), SCOPES)
-            creds = flow.run_local_server(port=0)
-        cfg.token_file.write_text(creds.to_json())
-    return build("gmail", "v1", credentials=creds)
+    return build("gmail", "v1", credentials=google_auth.credentials(cfg))
 
 
 def download_statement(cfg: Config, dest: Path, query: str, exts: tuple[str, ...]) -> Path:

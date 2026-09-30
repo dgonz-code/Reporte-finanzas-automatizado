@@ -36,6 +36,9 @@
     ["PAGO TARJETA", "Pago tarjeta (interno)"], ["PAGO TC", "Pago tarjeta (interno)"],
     ["PAGO TARJ", "Pago tarjeta (interno)"], ["PAGO EN EFECTIVO", "Pago tarjeta (interno)"],
     ["SUELDO", "Sueldo e ingresos"], ["REMUNERACI", "Sueldo e ingresos"],
+    ["SBX", "Restaurantes y delivery"], ["SABOR GOURMET", "Restaurantes y delivery"], ["TUU*BAR", "Restaurantes y delivery"],
+    ["TUU*FABRICA DE MOTE", "Restaurantes y delivery"], ["LONCHERA", "Restaurantes y delivery"],
+    ["CARDINALE", "Compras y retail"], ["BICICLETAS", "Compras y retail"], ["RECORRIDO", "Viajes"],
     ["MERCADOPA", "Pagos digitales sin detalle"], ["MERPAGO", "Pagos digitales sin detalle"],
     ["MERCADO PAGO", "Pagos digitales sin detalle"]
   ]

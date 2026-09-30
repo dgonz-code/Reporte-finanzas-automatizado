@@ -41,7 +41,7 @@ class FakeClient:
 
 
 def cfg(tmp_path):
-    return Config(data_dir=tmp_path / "data", output_dir=tmp_path / "out")
+    return Config(llm="api", data_dir=tmp_path / "data", output_dir=tmp_path / "out")
 
 
 class FakeWebClient(FakeClient):
@@ -189,3 +189,90 @@ def test_real_account_statement_reconciles():
     from reporte.account_parser import parse_account_statement
 
     assert parse_account_statement(PDF, os.environ["PDF_PASSWORD"])["valido"]
+
+
+# ---------- Google Sheets (servicio simulado) ----------
+class FakeSheets:
+    """Imita lo minimo de la API de Sheets con un dict en memoria."""
+
+    def __init__(self):
+        self.tabs = {}
+
+    def spreadsheets(self):
+        outer = self
+
+        class V:
+            def get(self, spreadsheetId, range):
+                tab = range.split("!")[0]
+                return SimpleNamespace(execute=lambda: {"values": outer.tabs.get(tab, [])})
+
+            def clear(self, spreadsheetId, range):
+                return SimpleNamespace(execute=lambda: outer.tabs.pop(range.split("!")[0], None))
+
+            def update(self, spreadsheetId, range, valueInputOption, body):
+                assert valueInputOption == "RAW"
+                return SimpleNamespace(execute=lambda: outer.tabs.__setitem__(range.split("!")[0], body["values"]))
+
+        class S:
+            def values(self_inner):
+                return V()
+
+            def get(self_inner, spreadsheetId):
+                return SimpleNamespace(execute=lambda: {"sheets": [{"properties": {"title": t}} for t in outer.tabs] or [{"properties": {"title": "x"}}]})
+
+            def batchUpdate(self_inner, spreadsheetId, body):
+                return SimpleNamespace(execute=lambda: None)
+
+        return S()
+
+
+def test_sheets_upsert_is_idempotent_and_keeps_other_months(tmp_path):
+    from reporte import sheets_client
+
+    c = Config(data_dir=tmp_path / "data", sheet_id="SID")
+    svc = FakeSheets()
+    movs = [{"fuente": "tarjeta_credito", "fecha": "2026-08-02", "descripcion": "JUMBO", "monto": -1000, "categoria": "Supermercado", "tipo": "compra"}]
+    agg = analyzer.aggregate(movs)
+    sheets_client.save_month(c, "2026-07", movs, agg, svc=svc)
+    sheets_client.save_month(c, "2026-08", movs, agg, svc=svc)
+    sheets_client.save_month(c, "2026-08", movs, agg, svc=svc)  # repetir agosto no duplica
+    assert [r[0] for r in svc.tabs["Movimientos"]] == ["periodo", "2026-07", "2026-08"]
+    assert [r[0] for r in svc.tabs["Resumen"]] == ["periodo", "2026-07", "2026-08"]
+    assert svc.tabs["Categorias"][1] == ["2026-07", "Supermercado", 1000.0]
+    assert svc.tabs["Presupuesto"] == [["categoria", "presupuesto_mensual"]]
+
+
+def test_claude_code_backend_uses_structured_output(tmp_path, monkeypatch):
+    import subprocess
+
+    from reporte.llm import ask
+
+    seen = {}
+
+    def fake_run(cmd, input, **kw):
+        seen["cmd"], seen["input"] = cmd, input
+        out = {"is_error": False, "structured_output": {"ok": 1}, "usage": {"input_tokens": 2, "cache_creation_input_tokens": 1500, "output_tokens": 50}}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(out), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    c = Config(llm="claude-code")
+    log = UsageLog()
+    assert ask(None, c, log, "t", "sys", "user text", {"type": "object"}) == {"ok": 1}
+    assert seen["cmd"][:2] == ["claude", "-p"] and "--tools" in seen["cmd"] and seen["input"] == "user text"
+    assert log.calls[0]["in"] == 1502
+    assert "Incluido en tu plan" in log.summary(c)
+
+
+def test_no_web_search_with_claude_code_backend(tmp_path, monkeypatch):
+    import subprocess
+
+    def fake_run(cmd, input, **kw):
+        out = {"is_error": False, "structured_output": {"items": [item(0, "Otros", 0.2)]}, "usage": {}}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(out), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    c = Config(llm="claude-code", data_dir=tmp_path / "data")
+    client = FakeWebClient({}, {})
+    movs = [{"descripcion": "TIENDA RARA", "monto": -90000}]
+    pend = categorizer.categorize(movs, c, client, UsageLog(), use_web=True)
+    assert client.web_calls == [] and pend  # sin web; queda para preguntarte

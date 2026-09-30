@@ -1,6 +1,8 @@
 """Llamada a Claude con salida JSON estructurada y registro de tokens/costo."""
 import json
+import subprocess
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import anthropic
 
@@ -20,7 +22,11 @@ class UsageLog:
 
     def summary(self, cfg: Config) -> str:
         if not self.calls:
-            return "Uso de LLM: 0 llamadas (costo $0)."
+            return "Uso de IA: 0 llamadas (costo $0)."
+        if cfg.llm == "claude-code":
+            t_in, t_out = sum(c["in"] for c in self.calls), sum(c["out"] for c in self.calls)
+            return (f"Uso de IA via Claude Code: {len(self.calls)} llamada(s), {t_in} tokens de entrada, {t_out} de salida. "
+                    "Incluido en tu plan; sin costo adicional.")
         lines = []
         tot_in = tot_out = 0
         for c in self.calls:
@@ -32,8 +38,40 @@ class UsageLog:
         return f"Uso de LLM ({cfg.model}, effort={cfg.effort}):\n" + "\n".join(lines) + f"\n  TOTAL ~US${total:.4f}"
 
 
-def ask(client: anthropic.Anthropic, cfg: Config, log: UsageLog, label: str,
+def ask(client, cfg: Config, log: UsageLog, label: str,
         system: str, user: str, schema: dict, max_tokens: int = 8000) -> dict:
+    if cfg.llm == "claude-code":
+        return _ask_claude_code(cfg, log, label, system, user, schema)
+    return _ask_api(client, cfg, log, label, system, user, schema, max_tokens)
+
+
+def _ask_claude_code(cfg: Config, log: UsageLog, label: str, system: str, user: str, schema: dict) -> dict:
+    """Usa tu plan de Claude a traves de Claude Code en modo no interactivo (`claude -p`).
+
+    Sin herramientas y con prompt de sistema propio: el contexto baja de ~32.000 a ~1.500 tokens por llamada.
+    """
+    cmd = ["claude", "-p", "--output-format", "json", "--json-schema", json.dumps(schema),
+           "--system-prompt", system, "--no-session-persistence", "--tools", ""]
+    if cfg.claude_code_model:
+        cmd += ["--model", cfg.claude_code_model]
+    try:
+        proc = subprocess.run(cmd, input=user, capture_output=True, text=True, timeout=600)
+    except FileNotFoundError:
+        raise SystemExit("No se encontro el comando `claude`. Instala Claude Code e inicia sesion con tu cuenta, o usa REPORTE_LLM=none.")
+    if proc.returncode != 0:
+        raise RuntimeError(f"claude -p fallo en '{label}': {proc.stderr.strip()[:300]}")
+    d = json.loads(proc.stdout)
+    if d.get("is_error") or d.get("structured_output") is None:
+        raise RuntimeError(f"claude -p sin resultado en '{label}': {str(d.get('result'))[:300]}")
+    u = d.get("usage", {})
+    log.add(label, SimpleNamespace(
+        input_tokens=u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0),
+        cache_read_input_tokens=u.get("cache_read_input_tokens", 0), output_tokens=u.get("output_tokens", 0)))
+    return d["structured_output"]
+
+
+def _ask_api(client, cfg: Config, log: UsageLog, label: str,
+             system: str, user: str, schema: dict, max_tokens: int = 8000) -> dict:
     # Streaming evita timeouts en extracciones largas; para respuestas cortas no cambia el costo.
     with client.messages.stream(
         model=cfg.model,

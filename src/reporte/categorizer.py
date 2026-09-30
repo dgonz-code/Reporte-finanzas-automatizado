@@ -167,7 +167,7 @@ def categorize(movs: list[dict], cfg: Config, client, log: UsageLog, use_llm: bo
         else:
             to_ai.append(key)
 
-    if to_ai and use_llm and client is not None:
+    if to_ai and use_llm:
         items = [{"id": i, "clave": k, "descripcion": groups[k][0]["descripcion"],
                   "tipo": "abono" if groups[k][0]["monto"] > 0 else "gasto", "monto": abs(groups[k][0]["monto"])}
                  for i, k in enumerate(to_ai)]
@@ -175,7 +175,7 @@ def categorize(movs: list[dict], cfg: Config, client, log: UsageLog, use_llm: bo
         res = {r["id"]: r for r in ask(client, cfg, log, "clasificar (IA)", SYSTEM, listing, SCHEMA, max_tokens=6000)["items"]}
 
         dudosos = [it for it in items if it["id"] in res and res[it["id"]]["confianza"] < CONF_OK]
-        web = _web_pass(client, cfg, log, dudosos) if dudosos and use_web else {}
+        web = _web_pass(client, cfg, log, dudosos) if dudosos and use_web and cfg.llm == "api" and client is not None else {}
         for it in items:
             r, fuente = res.get(it["id"]), "ia"
             if it["id"] in web and web[it["id"]]["confianza"] >= (r["confianza"] if r else 0):
