@@ -13,6 +13,21 @@ Lee tus cartolas (cuenta corriente PDF + tarjeta de crédito XLS), las clasifica
    - **Clave del PDF** de la cuenta corriente (también al Llavero).
    - **Claude (opcional):** ver más abajo.
 
+## Actualizar la aplicación (nuevas versiones)
+
+Las mejoras se publican en GitHub; en tu Mac las traes con **doble clic en `actualizar.command`** (baja lo nuevo y vuelve a abrir la app). Tus datos (`data/`), tus cartolas (`entrada/`) y tus claves (Llavero) no se tocan.
+
+Configuración única, para que la carpeta quede conectada a GitHub (repositorio privado). En la Terminal, dentro de la carpeta del proyecto:
+
+```
+git init -q
+git remote add origin https://github.com/dgonz-code/Reporte-finanzas-automatizado.git
+git fetch origin claude/bank-statement-agent-mqow99
+git checkout -q -f -B claude/bank-statement-agent-mqow99 origin/claude/bank-statement-agent-mqow99
+```
+
+`git fetch` te pedirá usuario y contraseña de GitHub: como contraseña usa un **token de acceso personal** (GitHub → Settings → Developer settings → Personal access tokens → *Fine-grained*, solo este repositorio, permiso *Contents: Read-only*). macOS lo guarda en el Llavero y no te lo vuelve a pedir.
+
 ## Uso mensual
 
 1. **Reporte → Traer de Gmail** baja la cartola de la cuenta corriente (remitente `cartolas.info@scotiabank.cl`).

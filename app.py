@@ -8,11 +8,18 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from reporte import ajustes, categorizer, mail_client, pipeline, report_pdf, secrets_store  # noqa: E402
+from reporte import ajustes, categorizer, mail_client, pipeline, report_pdf, secrets_store, ui_kit  # noqa: E402
 from reporte.config import Config  # noqa: E402
 
-st.set_page_config(page_title="Finanzas personales", page_icon="💰", layout="wide")
+st.set_page_config(page_title="Finanzas personales", page_icon="💰", layout="wide", initial_sidebar_state="expanded")
+st.markdown(ui_kit.CSS, unsafe_allow_html=True)
 clp = report_pdf.clp
+
+
+def html_escape(t: str) -> str:
+    import html
+
+    return html.escape(t)
 
 
 def cfg() -> Config:
@@ -32,11 +39,12 @@ def use_claude(c: Config) -> bool:
 def pagina_reporte() -> None:
     c = cfg()
     a = ajustes.load(c)
-    st.header("Reporte del mes")
+    st.markdown('<div class="hero"><h1>Reporte del mes</h1></div>', unsafe_allow_html=True)
+    st.caption("Carga las dos cartolas y genera el reporte. Todo se procesa en este equipo.")
     col1, col2 = st.columns(2)
 
-    with col1:
-        st.subheader("1 · Cuenta corriente (PDF)")
+    with col1, st.container(border=True):
+        st.subheader("1 · Cuenta corriente")
         if gmail_ok():
             if st.button("📧 Traer de Gmail", use_container_width=True):
                 try:
@@ -57,8 +65,8 @@ def pagina_reporte() -> None:
         if st.session_state.get("cuenta"):
             st.success(f"Lista: {Path(st.session_state['cuenta']).name}")
 
-    with col2:
-        st.subheader("2 · Tarjeta de crédito (.xls)")
+    with col2, st.container(border=True):
+        st.subheader("2 · Tarjeta de crédito")
         up = st.file_uploader("Sube el estado de cuenta descargado del banco", type=["xls", "xlsx"], key="up_tarjeta")
         if up:
             c.inbox_dir.mkdir(parents=True, exist_ok=True)
@@ -98,44 +106,60 @@ def pagina_reporte() -> None:
         mostrar_resultado(st.session_state["res"], c, a)
 
 
+def _mes_anterior(c: Config, periodo: str):
+    prev = [m for m in pipeline.meses_guardados(c) if m < periodo]
+    return (prev[-1], json.loads((c.data_dir / prev[-1] / "resumen.json").read_text())) if prev else (None, None)
+
+
 def mostrar_resultado(r, c: Config, a: dict) -> None:
     agg = r.agg
     st.divider()
-    st.subheader(f"Resultado · {r.periodo}")
+    st.markdown(f'<div class="hero"><h1>{r.periodo}</h1><span class="chip">{html_escape(r.meta["banco"])}</span></div>', unsafe_allow_html=True)
     for m in st.session_state.get("msgs", []):
         st.warning(m)
+
+    chips = "".join(
+        ui_kit.chip(f"{f.replace('_', ' ').capitalize()}: " + ("cuadra con el banco" if not d else f"diferencia de {clp(d)}"), "ok" if not d else "bad")
+        for f, d in agg["conciliacion"].items())
+    if agg["pendientes"]:
+        chips += ui_kit.chip(f"{len(agg['pendientes'])} clasificaciones por confirmar ({clp(sum(p['total'] for p in agg['pendientes']))})", "warn")
+    st.markdown(chips, unsafe_allow_html=True)
+    st.markdown(f'<p class="lead">{html_escape(r.insights["resumen_ejecutivo"])}</p>', unsafe_allow_html=True)
+
+    mes_prev, prev = _mes_anterior(c, r.periodo)
     k = st.columns(4)
-    k[0].metric("Ingresos", clp(agg["ingresos"]))
-    k[1].metric("Gastos", clp(agg["gastos"]), help=f"Cuenta corriente {clp(agg['gastos_cuenta_corriente'])} + tarjeta {clp(agg['gastos_tarjeta'])}")
+    k[0].metric("Ingresos", clp(agg["ingresos"]), delta=f"{clp(agg['ingresos'] - prev['ingresos'])} vs {mes_prev}" if prev else None)
+    k[1].metric("Gastos", clp(agg["gastos"]), delta=f"{clp(agg['gastos'] - prev['gastos'])} vs {mes_prev}" if prev else None,
+                delta_color="inverse", help=f"Cuenta corriente {clp(agg['gastos_cuenta_corriente'])} + tarjeta {clp(agg['gastos_tarjeta'])}")
     k[2].metric("Balance", clp(agg["balance"]))
     k[3].metric("Tasa de ahorro", report_pdf.pct(agg["tasa_ahorro"]))
 
-    for fuente, diff in agg["conciliacion"].items():
-        nombre = fuente.replace("_", " ")
-        (st.success if not diff else st.error)(f"{'✅' if not diff else '⚠️'} {nombre}: " + ("cuadra con el banco" if not diff else f"diferencia de {clp(diff)}: revisa la lectura"))
-
-    if agg["pendientes"]:
-        st.warning(f"🏷️ {len(agg['pendientes'])} clasificaciones con duda ({clp(sum(p['total'] for p in agg['pendientes']))}). Resuélvelas en **Clasificar**.")
-    st.markdown("**" + r.insights["resumen_ejecutivo"] + "**")
-    cA, cB = st.columns(2)
-    with cA:
-        for h in r.insights["hallazgos"]:
-            st.markdown(f"- {h}")
-        for x in r.insights["recomendaciones"]:
-            st.markdown(f"- 💡 {x}")
-    with cB:
-        for x in r.insights["alertas"]:
-            st.markdown(f"- ⚠️ {x}")
-    st.bar_chart(pd.Series(agg["gastos_por_categoria"], name="Gasto"), horizontal=True)
-    with st.expander("Diez mayores gastos"):
-        st.dataframe(pd.DataFrame([{"fecha": g["fecha"], "descripcion": g["descripcion"], "monto": -g["monto"], "categoria": g["categoria"]}
-                                   for g in agg["mayores_gastos"]]), hide_index=True, use_container_width=True)
+    t1, t2, t3 = st.tabs(["Hallazgos", "Gastos por categoría", "Mayores gastos"])
+    with t1:
+        cA, cB = st.columns(2)
+        with cA, st.container(border=True):
+            st.markdown("**Lo más relevante**")
+            for h in r.insights["hallazgos"] + ["💡 " + x for x in r.insights["recomendaciones"]]:
+                st.markdown(f"- {h}")
+        with cB, st.container(border=True):
+            st.markdown("**Atención**")
+            for x in r.insights["alertas"] or ["Nada que destacar este mes."]:
+                st.markdown(f"- {x}")
+    with t2:
+        st.markdown(ui_kit.barras(agg["gastos_por_categoria"], clp), unsafe_allow_html=True)
+        with st.expander("Ver como tabla"):
+            st.dataframe(pd.DataFrame({"Categoría": list(agg["gastos_por_categoria"]), "Gasto": list(agg["gastos_por_categoria"].values())}),
+                         hide_index=True, use_container_width=True, column_config={"Gasto": st.column_config.NumberColumn(format="localized")})
+    with t3:
+        st.dataframe(pd.DataFrame([{"Fecha": g["fecha"], "Descripción": g["descripcion"], "Monto": -g["monto"], "Categoría": g["categoria"]}
+                                   for g in agg["mayores_gastos"]]), hide_index=True, use_container_width=True,
+                     column_config={"Monto": st.column_config.NumberColumn(format="localized")})
     if r.log.calls:
         st.caption(r.log.summary(c))
 
-    b1, b2 = st.columns(2)
+    b1, b2, _ = st.columns([1, 1, 2])
     b1.download_button("⬇️ Descargar PDF", r.pdf.read_bytes(), file_name=r.pdf.name, mime="application/pdf", use_container_width=True)
-    if gmail_ok() and b2.button("✉️ Enviarme el reporte por correo", use_container_width=True):
+    if gmail_ok() and b2.button("✉️ Enviármelo por correo", use_container_width=True):
         try:
             mail_client.send_report(a["gmail_email"], secrets_store.get("gmail_app_password"), a["report_to"] or None,
                                     f"Reporte financiero - {r.periodo}", report_pdf.build_email_html(r.meta, agg, r.insights), r.pdf)
