@@ -308,3 +308,83 @@ def test_teach_and_correct_from_google_sheets(tmp_path):
     movs2 = [{"descripcion": "TIENDA RARA SPA", "monto": -30000, "fuente": "tarjeta_credito"}]
     assert categorizer.categorize(movs2, c, None, UsageLog(), use_llm=False) == []
     assert movs2[0]["categoria"] == "Hogar y ferreteria"  # aprendido: el mes siguiente ya no pregunta
+
+
+# ---------- Gmail por IMAP + recalculo de meses ----------
+def _email_with_pdf(name: str, payload: bytes) -> bytes:
+    from email.message import EmailMessage
+
+    em = EmailMessage()
+    em["Subject"], em["From"] = "Cartola", "cartolas.info@scotiabank.cl"
+    em.set_content("adjunto")
+    em.add_attachment(payload, maintype="application", subtype="pdf", filename=name)
+    return em.as_bytes()
+
+
+class FakeImap:
+    mails = {b"1": _email_with_pdf("vieja.pdf", b"%PDF-old"), b"2": _email_with_pdf("CartolaCliente.pdf", b"%PDF-new")}
+    queries = []
+
+    def __init__(self, host):
+        self.host = host
+
+    def login(self, u, p):
+        if p != "abcdabcdabcdabcd":
+            import imaplib
+
+            raise imaplib.IMAP4.error("AUTHENTICATIONFAILED")
+
+    def select(self, box, readonly=False):
+        return "OK", [b"2"]
+
+    def search(self, charset, *criteria):
+        FakeImap.queries.append(criteria)
+        return "OK", [b"1 2"]
+
+    def fetch(self, mid, what):
+        return "OK", [(b"x", self.mails[mid])]
+
+    def logout(self):
+        return "BYE", []
+
+
+def test_gmail_imap_download_latest_and_password_with_spaces(tmp_path, monkeypatch):
+    import imaplib
+
+    from reporte import mail_client
+
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeImap)
+    p = mail_client.download_statement("yo@gmail.com", "abcd abcd abcd abcd", "from:cartolas.info@scotiabank.cl", tmp_path, (".pdf",))
+    assert p.name == "CartolaCliente.pdf" and p.read_bytes() == b"%PDF-new"  # el mas reciente primero
+    assert FakeImap.queries[-1][0] == "X-GM-RAW"
+    assert mail_client.test_connection("yo@gmail.com", "abcd abcd abcd abcd") is None
+    assert "rechazo" in mail_client.test_connection("yo@gmail.com", "mala")
+
+
+def test_recalcular_mes_applies_corrections_without_reuploading(tmp_path):
+    from reporte import pipeline
+    from reporte.card_parser import parse_card_statement
+
+    if not CARD.exists():
+        pytest.skip("requiere el estado de cuenta real")
+    c = Config(llm="none", data_dir=tmp_path / "data", output_dir=tmp_path / "out")
+    r = pipeline.procesar(None, CARD, c)
+    assert r.periodo == "2026-08" and r.pdf.exists() and pipeline.meses_guardados(c) == ["2026-08"]
+    antes = r.agg["gastos_por_categoria"].get("Mascotas", 0)
+    categorizer.Clasificaciones(c.data_dir / "clasificaciones.db").put("GRUPO MBO WEB", "Mascotas", "usuario", 1.0)
+    r2 = pipeline.recalcular_mes(c, "2026-08")
+    assert r2.agg["gastos_por_categoria"]["Mascotas"] == antes + 25493
+    assert r2.agg["conciliacion"]["tarjeta"] == 0  # la conciliacion sobrevive al recalculo
+
+
+def test_recalculo_da_los_mismos_numeros_que_la_primera_corrida(tmp_path):
+    """Regresion: al recalcular se perdia el titular y los traspasos propios pasaban a contarse como gasto."""
+    from reporte import pipeline
+
+    if not (CARD.exists() and PDF.exists() and os.getenv("PDF_PASSWORD")):
+        pytest.skip("requiere las cartolas reales y PDF_PASSWORD")
+    c = Config(llm="none", data_dir=tmp_path / "data", output_dir=tmp_path / "out", pdf_password=os.environ["PDF_PASSWORD"])
+    r1 = pipeline.procesar(PDF, CARD, c)
+    r2 = pipeline.recalcular_mes(c, r1.periodo)
+    assert (r2.agg["ingresos"], r2.agg["gastos"]) == (r1.agg["ingresos"], r1.agg["gastos"]) == (3249546, 3251336)
+    assert pipeline.cargar_comercios(c, r1.periodo)  # la pantalla Clasificar usa el mismo titular

@@ -1,0 +1,5 @@
+# Opcionales: solo si usas estas funciones
+anthropic>=1.0                     # REPORTE_LLM=api (pago por uso, aparte del plan)
+google-api-python-client>=2.120    # Gmail y Sheets por API (en vez de IMAP)
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2

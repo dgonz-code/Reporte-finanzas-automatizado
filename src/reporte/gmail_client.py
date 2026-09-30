@@ -1,4 +1,6 @@
 """Busca el correo de la cartola, descarga los PDF adjuntos y envia el reporte."""
+from __future__ import annotations
+
 import base64
 import mimetypes
 from email.message import EmailMessage

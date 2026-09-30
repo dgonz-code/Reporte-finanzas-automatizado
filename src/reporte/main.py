@@ -8,109 +8,38 @@ Uso:
   python -m reporte.main --tarjeta entrada/tarjeta.xls --no-send              # sin IA, $0
   python -m reporte.main --sheets                                             # cuenta desde Gmail, tarjeta desde entrada/
 """
+from __future__ import annotations
+
 import argparse
 from pathlib import Path
 
-import anthropic
-
-from . import analyzer, categorizer, report_pdf, store
-from .card_parser import parse_card_statement
 from .config import Config
-from .llm import UsageLog
+from .pipeline import latest_file, procesar
+from . import report_pdf
 
 
-def _load_account(path: Path, cfg: Config, client, log: UsageLog, use_llm: bool) -> dict:
-    """Parser determinista primero ($0); el LLM solo si el formato no se reconoce o no cuadra."""
-    from . import account_parser
-
-    data = None
-    try:
-        data = account_parser.parse_account_statement(path, cfg.pdf_password)
-        if data["valido"]:
-            return data
-        print("AVISO: la cartola no cuadra con sus totales declarados.")
-    except Exception as e:  # formato distinto, clave incorrecta, etc.
-        print(f"AVISO: no se pudo leer la cartola con el parser determinista ({e}).")
-    if not use_llm:
-        if data:
-            return data
-        raise SystemExit("No se pudo leer la cuenta corriente sin LLM.")
-    print("Usando el LLM como respaldo para la cuenta corriente.")
-    return analyzer.extract_account(client, cfg, log, account_parser.extract_text(path, cfg.pdf_password))
-
-
-def latest_file(folder: Path, pattern: str) -> Path | None:
-    files = sorted(folder.glob(pattern), key=lambda f: f.stat().st_mtime, reverse=True) if folder.exists() else []
-    return files[0] if files else None
-
-
-def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bool, use_llm: bool,
-        preguntar: bool = False, sheets: bool = False) -> Path:
-    if not (cuenta_pdf or tarjeta_xls):
-        raise SystemExit("Indica al menos --cuenta o --tarjeta.")
-    log = UsageLog()
-    client = anthropic.Anthropic() if use_llm and cfg.llm == "api" else None
-
-    movs, cuenta, tarjeta = [], None, None
-    if tarjeta_xls:
-        tarjeta = parse_card_statement(tarjeta_xls)
-        movs += [{**m, "fuente": "tarjeta_credito"} for m in tarjeta["movimientos"]]
-    if cuenta_pdf:
-        cuenta = _load_account(cuenta_pdf, cfg, client, log, use_llm)
-        movs += [{**m, "fuente": "cuenta_corriente"} for m in cuenta["movimientos"]]
-
+def run(cuenta_pdf, tarjeta_xls, cfg: Config, send: bool, use_llm: bool, preguntar: bool = False, sheets: bool = False) -> Path:
+    r = procesar(cuenta_pdf, tarjeta_xls, cfg, use_llm=use_llm, preguntar=preguntar, sheets=sheets)
+    agg = r.agg
+    print(f"Reporte: {r.pdf}\nDatos guardados en {cfg.data_dir / r.periodo}")
     if sheets:
-        from . import sheets_client
+        from . import categorizer, sheets_client
 
-        n = categorizer.aplicar_correcciones(cfg, sheets_client.pull_corrections(cfg))
-        if n:
-            print(f"{n} correccion(es) aprendidas desde la pestana 'Clasificar' de Google Sheets.")
-
-    pendientes = categorizer.categorize(movs, cfg, client, log, use_llm, use_web=cfg.use_web, titular=cuenta and cuenta.get("titular"))
-    if preguntar and pendientes:
-        if categorizer.es_interactivo():
-            categorizer.preguntar(cfg, pendientes, movs)
-            pendientes = []
-        else:
-            print("AVISO: --preguntar requiere una terminal interactiva; las dudas quedan en data/pendientes.json.")
-    agg = analyzer.aggregate(movs, cuenta, tarjeta, pendientes)
-
-    if tarjeta and tarjeta["fecha_estado"]:
-        periodo_iso = tarjeta["fecha_estado"][:7]
-    elif cuenta:
-        periodo_iso = cuenta.get("periodo") or max(m["fecha"] for m in movs)[:7]
-    else:
-        periodo_iso = max(m["fecha"] for m in movs)[:7]
-    meta = {"periodo": periodo_iso, "moneda": "CLP",
-            "banco": " + ".join(filter(None, [cuenta and f"Cuenta corriente {cuenta['banco']}", tarjeta and f"Tarjeta {tarjeta['tarjeta']}"]))}
-    insights = analyzer.generate_insights(client, cfg, log, meta, agg) if use_llm else analyzer.basic_insights(agg)
-
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    out = cfg.output_dir / f"reporte-{periodo_iso}.pdf"
-    report_pdf.build_pdf(out, meta, agg, insights)
-    store.save_month(cfg.data_dir, periodo_iso, movs, agg)
-
-    print(f"Reporte: {out}\nDatos guardados en {cfg.data_dir / periodo_iso}")
-    if sheets:
-        from . import sheets_client
-
-        print("Google Sheets:", sheets_client.save_month(cfg, periodo_iso, movs, agg))
-        sheets_client.push_comercios(cfg, categorizer.comercios_resumen(movs, cfg, pendientes), categorizer.CATEGORIAS)
+        print("Google Sheets:", sheets_client.save_month(cfg, r.periodo, r.movs, agg))
+        sheets_client.push_comercios(cfg, categorizer.comercios_resumen(r.movs, cfg, r.pendientes), categorizer.CATEGORIAS)
     print(f"Ingresos {agg['ingresos']:,.0f} | Gastos {agg['gastos']:,.0f} (cuenta {agg['gastos_cuenta_corriente']:,.0f} + tarjeta {agg['gastos_tarjeta']:,.0f})")
     for k, v in agg["conciliacion"].items():
         print(f"Conciliacion {k}: {'OK' if not v else f'DIFERENCIA {v:,.0f} -> revisar extraccion'}")
-    if pendientes:
-        donde = "la pestana 'Clasificar' de Google Sheets (columna corregir_a)" if sheets else "python -m reporte.clasificar"
-        print(f"{len(pendientes)} clasificaciones con duda (total ${sum(p['total'] for p in pendientes):,.0f}). "
-              f"Respondelas en {donde} y vuelve a correr el reporte.")
-    print(log.summary(cfg))
-
+    if r.pendientes:
+        donde = "la pestana 'Clasificar' de Google Sheets (columna corregir_a)" if sheets else "python -m reporte.clasificar (o la interfaz grafica)"
+        print(f"{len(r.pendientes)} clasificaciones con duda (total ${sum(p['total'] for p in r.pendientes):,.0f}). Respondelas en {donde} y vuelve a correr el reporte.")
+    print(r.log.summary(cfg))
     if send:
         from . import gmail_client
 
-        gmail_client.send_report(cfg, f"Reporte financiero - {periodo_iso}", report_pdf.build_email_html(meta, agg, insights), out)
+        gmail_client.send_report(cfg, f"Reporte financiero - {r.periodo}", report_pdf.build_email_html(r.meta, agg, r.insights), r.pdf)
         print("Correo enviado.")
-    return out
+    return r.pdf
 
 
 def main() -> None:

@@ -3,6 +3,8 @@
 Uso:  python -m reporte.clasificar
 Despues vuelve a correr el reporte: ya no gasta tokens para esos comercios.
 """
+from __future__ import annotations
+
 import json
 
 from .categorizer import es_interactivo, preguntar

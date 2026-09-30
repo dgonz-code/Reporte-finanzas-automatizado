@@ -1,10 +1,10 @@
 """Llamada a Claude con salida JSON estructurada y registro de tokens/costo."""
+from __future__ import annotations
+
 import json
 import subprocess
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-
-import anthropic
 
 from .config import Config
 
@@ -89,8 +89,10 @@ def _ask_api(client, cfg: Config, log: UsageLog, label: str,
     return json.loads(next(b.text for b in msg.content if b.type == "text"))
 
 
-def ask_web(client: anthropic.Anthropic, cfg: Config, log: UsageLog, label: str, prompt: str, max_uses: int = 5) -> str | None:
+def ask_web(client, cfg: Config, log: UsageLog, label: str, prompt: str, max_uses: int = 5) -> str | None:
     """Pregunta con la herramienta de busqueda web de Anthropic. Devuelve el texto final o None si falla."""
+    import anthropic
+
     messages = [{"role": "user", "content": prompt}]
     try:
         for _ in range(4):  # la busqueda del servidor puede pausar el turno (pause_turn)

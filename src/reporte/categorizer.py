@@ -10,6 +10,8 @@ Escalera por comercio (se detiene en el primer paso que resuelve):
 Las transferencias a personas (TEF) no se mandan a la IA ni a la web: se clasifican por RUT y se te preguntan
 solo si el monto acumulado es relevante.
 """
+from __future__ import annotations
+
 import json
 import re
 import sqlite3

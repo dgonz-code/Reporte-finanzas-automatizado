@@ -10,6 +10,8 @@ Pestanas:
 
 Es idempotente: volver a correr el mismo mes reemplaza sus filas, no las duplica.
 """
+from __future__ import annotations
+
 from .config import Config
 
 TABS = {

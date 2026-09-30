@@ -3,6 +3,8 @@
 No usa LLM: el archivo es una tabla con columnas fijas, asi la extraccion cuesta $0
 y es exacta. El monto que se toma es "Cargo del Mes" (en cuotas = valor de la cuota).
 """
+from __future__ import annotations
+
 import re
 from datetime import datetime
 from pathlib import Path

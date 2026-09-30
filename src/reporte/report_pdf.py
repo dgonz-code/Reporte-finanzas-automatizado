@@ -1,4 +1,6 @@
 """Genera el PDF de analisis detallado y el resumen HTML para el correo."""
+from __future__ import annotations
+
 import html
 from io import BytesIO
 from pathlib import Path
@@ -12,6 +14,13 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+
+def pct(x: float | None) -> str:
+    if x is None:
+        return "n/d"
+    v = round(x * 100, 1)
+    return f"{abs(v) if v == 0 else v:.1f}%"
 
 
 def clp(x: float, moneda: str = "CLP") -> str:
@@ -53,7 +62,7 @@ def build_pdf(path: Path, data: dict, agg: dict, insights: dict) -> None:
         ["  · en cuenta corriente", clp(agg["gastos_cuenta_corriente"], m)],
         ["  · en tarjeta de credito", clp(agg["gastos_tarjeta"], m)],
         ["Balance del mes", clp(agg["balance"], m)],
-        ["Tasa de ahorro", f"{agg['tasa_ahorro']:.0%}" if agg["tasa_ahorro"] is not None else "n/d"],
+        ["Tasa de ahorro", pct(agg["tasa_ahorro"])],
         ["Movimientos", str(agg["n_movimientos"])],
     ]
     t = Table(kpis, colWidths=[6 * cm, 5 * cm])

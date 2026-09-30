@@ -3,6 +3,8 @@
 Los calculos (totales, categorias, conciliacion) se hacen en Python; Claude solo
 interpreta el PDF de la cuenta corriente y redacta el analisis sobre numeros ya calculados.
 """
+from __future__ import annotations
+
 import json
 from collections import defaultdict
 
@@ -130,7 +132,7 @@ def basic_insights(agg: dict) -> dict:
         alertas.append(f"Ya tienes comprometidos {_clp(prox[0])} en cuotas de tarjeta para el mes siguiente.")
     if agg["tasa_ahorro"] is not None and agg["tasa_ahorro"] < 0:
         alertas.append("Gastaste mas de lo que ingreso este mes.")
-    ahorro = f"tasa de ahorro {agg['tasa_ahorro']:.0%}" if agg["tasa_ahorro"] is not None else "sin ingresos registrados"
+    ahorro = f"tasa de ahorro {round(agg['tasa_ahorro'] * 100, 1) or 0:.1f}%" if agg["tasa_ahorro"] is not None else "sin ingresos registrados"
     return {
         "resumen_ejecutivo": f"Ingresos {_clp(agg['ingresos'])}, gastos {_clp(agg['gastos'])}, balance {_clp(agg['balance'])} ({ahorro}).",
         "hallazgos": hallazgos, "alertas": alertas, "recomendaciones": [],

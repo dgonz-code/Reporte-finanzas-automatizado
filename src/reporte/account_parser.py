@@ -5,6 +5,8 @@ de la variacion del saldo (sube = abono, baja = cargo). Se valida contra los tot
 que declara el propio documento; si algo no cuadra, main cae al extractor con LLM.
 Usa pypdfium2 (soporta PDF con clave, sin dependencias nativas extra).
 """
+from __future__ import annotations
+
 import re
 from pathlib import Path
 
