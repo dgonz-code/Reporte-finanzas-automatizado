@@ -26,7 +26,8 @@
     ["EASY", "Hogar y ferreteria"],
     ["PETDAWG", "Mascotas"],
     ["SEGUROS", "Seguros"],
-    ["COOPEUCH", "Deuda y creditos"],
+    ["COOPEUCH", "Deuda y creditos"], ["ITA CORPBANCA", "Deuda y creditos"], ["PAGO IMPTO", "Impuestos"],
+    ["CONDOMINIO", "Vivienda y cuentas basicas"], ["EDIFICIO", "Vivienda y cuentas basicas"],
     ["LATAM", "Viajes"], ["HOTEL", "Viajes"],
     ["PAT UAI", "Educacion"],
     ["SERVICIO DE ACTIVIDAD", "Comisiones e intereses bancarios"], ["INTERES NORMAL", "Comisiones e intereses bancarios"],
@@ -34,7 +35,7 @@
     ["COMISION", "Comisiones e intereses bancarios"],
     ["PAGO TARJETA", "Pago tarjeta (interno)"], ["PAGO TC", "Pago tarjeta (interno)"],
     ["PAGO TARJ", "Pago tarjeta (interno)"], ["PAGO EN EFECTIVO", "Pago tarjeta (interno)"],
-    ["SUELDO", "Sueldo e ingresos"], ["REMUNERACION", "Sueldo e ingresos"],
+    ["SUELDO", "Sueldo e ingresos"], ["REMUNERACI", "Sueldo e ingresos"],
     ["MERCADOPA", "Pagos digitales sin detalle"], ["MERPAGO", "Pagos digitales sin detalle"],
     ["MERCADO PAGO", "Pagos digitales sin detalle"]
   ]

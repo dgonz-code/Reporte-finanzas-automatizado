@@ -6,7 +6,7 @@ interpreta el PDF de la cuenta corriente y redacta el analisis sobre numeros ya 
 import json
 from collections import defaultdict
 
-from .categorizer import INGRESOS, INTERNO, norm
+from .categorizer import INGRESOS, INTERNOS, key_of
 from .llm import ask
 
 ACCOUNT_SCHEMA = {
@@ -48,6 +48,7 @@ INSIGHTS_SCHEMA = {
 
 
 def extract_account(client, cfg, log, text: str) -> dict:
+    """Respaldo con LLM para cartolas cuyo formato el parser determinista no reconoce."""
     system = (
         "Extraes movimientos de cartolas de cuenta corriente chilenas. Incluye TODOS los movimientos, "
         "sin omitir ni inventar. Montos como numeros sin separadores de miles; cargos negativos, abonos positivos. "
@@ -58,35 +59,35 @@ def extract_account(client, cfg, log, text: str) -> dict:
     return data
 
 
-def aggregate(movs: list[dict], cuenta: dict | None = None, tarjeta: dict | None = None) -> dict:
+def aggregate(movs: list[dict], cuenta: dict | None = None, tarjeta: dict | None = None, pendientes: list | None = None) -> dict:
     """movs: movimientos ya categorizados (monto<0 = gasto)."""
     ingresos = 0.0
     by_cat: dict[str, float] = defaultdict(float)
     by_desc: dict[str, list[float]] = defaultdict(list)
     for m in movs:
         cat = m["categoria"]
-        if cat == INTERNO:
+        if cat in INTERNOS:
             continue
         if cat in INGRESOS:
             ingresos += m["monto"]
             continue
         by_cat[cat] += -m["monto"]  # reembolsos (monto>0) restan del gasto de su categoria
         if m["monto"] < 0:
-            by_desc[norm(m["descripcion"])].append(-m["monto"])
+            by_desc[key_of(m["descripcion"])].append(-m["monto"])
 
     gastos = sum(by_cat.values())
-    gastos_cuenta = -sum(m["monto"] for m in movs if m.get("fuente") == "cuenta_corriente" and m["categoria"] not in INGRESOS | {INTERNO})
-    gastos_tarjeta = -sum(m["monto"] for m in movs if m.get("fuente") == "tarjeta_credito" and m["categoria"] != INTERNO)
+    gastos_cuenta = -sum(m["monto"] for m in movs if m.get("fuente") == "cuenta_corriente" and m["categoria"] not in INGRESOS | INTERNOS)
+    gastos_tarjeta = -sum(m["monto"] for m in movs if m.get("fuente") == "tarjeta_credito" and m["categoria"] not in INTERNOS)
 
     concil = {}
     if cuenta and cuenta.get("saldo_inicial") is not None and cuenta.get("saldo_final") is not None:
         net = sum(m["monto"] for m in movs if m.get("fuente") == "cuenta_corriente")
         concil["cuenta_corriente"] = round(cuenta["saldo_inicial"] + net - cuenta["saldo_final"], 2)
     if tarjeta and tarjeta.get("total_facturado_declarado") is not None:
-        net = -sum(m["monto"] for m in movs if m.get("fuente") == "tarjeta_credito" and m["categoria"] != INTERNO)
+        net = -sum(m["monto"] for m in movs if m.get("fuente") == "tarjeta_credito" and m["categoria"] not in INTERNOS)
         concil["tarjeta"] = round(net - tarjeta["total_facturado_declarado"], 2)
 
-    gasto_movs = [m for m in movs if m["monto"] < 0 and m["categoria"] != INTERNO and m["categoria"] not in INGRESOS]
+    gasto_movs = [m for m in movs if m["monto"] < 0 and m["categoria"] not in INTERNOS and m["categoria"] not in INGRESOS]
     return {
         "ingresos": ingresos,
         "gastos": gastos,
@@ -101,6 +102,7 @@ def aggregate(movs: list[dict], cuenta: dict | None = None, tarjeta: dict | None
         "n_movimientos": len(movs),
         "cuotas_por_vencer": (tarjeta or {}).get("cuotas_por_vencer", {}),
         "sin_categorizar": sum(1 for m in movs if m["categoria"] == "Otros"),
+        "pendientes": pendientes or [],
     }
 
 
@@ -129,6 +131,6 @@ def generate_insights(client, cfg, log, meta: dict, agg: dict) -> dict:
         "son gasto sin identificar: mencionalo si pesan. 'cuotas_por_vencer' son compromisos futuros de la tarjeta. "
         "Si una conciliacion es distinta de 0, agregala como alerta de calidad de datos."
     )
-    payload = {**meta, "agregados": {k: v for k, v in agg.items() if k != "mayores_gastos"},
+    payload = {**meta, "agregados": {k: v for k, v in agg.items() if k not in ("mayores_gastos", "pendientes")},
                "mayores_gastos": [{k: m[k] for k in ("fecha", "descripcion", "monto", "categoria")} for m in agg["mayores_gastos"][:5]]}
     return ask(client, cfg, log, "insights", system, json.dumps(payload, ensure_ascii=False), INSIGHTS_SCHEMA, max_tokens=3000)

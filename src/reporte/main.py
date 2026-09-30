@@ -2,7 +2,8 @@
 
 Uso:
   python -m reporte.main --cuenta entrada/cartola.pdf --tarjeta entrada/tarjeta.xls --no-send
-  python -m reporte.main --tarjeta entrada/tarjeta.xls --sin-llm --no-send    # $0, solo reglas
+  python -m reporte.main --cuenta ... --tarjeta ... --preguntar --no-send     # te consulta las dudas
+  python -m reporte.main --tarjeta entrada/tarjeta.xls --sin-llm --no-send    # $0, solo reglas y BBDD
   python -m reporte.main                                                      # desde Gmail y envia
 """
 import argparse
@@ -16,7 +17,27 @@ from .config import Config
 from .llm import UsageLog
 
 
-def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bool, use_llm: bool) -> Path:
+def _load_account(path: Path, cfg: Config, client, log: UsageLog, use_llm: bool) -> dict:
+    """Parser determinista primero ($0); el LLM solo si el formato no se reconoce o no cuadra."""
+    from . import account_parser
+
+    data = None
+    try:
+        data = account_parser.parse_account_statement(path, cfg.pdf_password)
+        if data["valido"]:
+            return data
+        print("AVISO: la cartola no cuadra con sus totales declarados.")
+    except Exception as e:  # formato distinto, clave incorrecta, etc.
+        print(f"AVISO: no se pudo leer la cartola con el parser determinista ({e}).")
+    if not use_llm:
+        if data:
+            return data
+        raise SystemExit("No se pudo leer la cuenta corriente sin LLM.")
+    print("Usando el LLM como respaldo para la cuenta corriente.")
+    return analyzer.extract_account(client, cfg, log, account_parser.extract_text(path, cfg.pdf_password))
+
+
+def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bool, use_llm: bool, preguntar: bool = False) -> Path:
     if not (cuenta_pdf or tarjeta_xls):
         raise SystemExit("Indica al menos --cuenta o --tarjeta.")
     log = UsageLog()
@@ -24,26 +45,29 @@ def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bo
 
     movs, cuenta, tarjeta = [], None, None
     if tarjeta_xls:
-        tarjeta = parse_card_statement(tarjeta_xls)  # sin LLM
+        tarjeta = parse_card_statement(tarjeta_xls)
         movs += [{**m, "fuente": "tarjeta_credito"} for m in tarjeta["movimientos"]]
     if cuenta_pdf:
-        if not use_llm:
-            raise SystemExit("La cuenta corriente (PDF) requiere LLM; quita --sin-llm o usa solo --tarjeta.")
-        from . import pdf_parser  # import perezoso: solo se necesita con cuenta corriente
-
-        cuenta = analyzer.extract_account(client, cfg, log, pdf_parser.extract_text(cuenta_pdf, cfg.pdf_password))
+        cuenta = _load_account(cuenta_pdf, cfg, client, log, use_llm)
         movs += [{**m, "fuente": "cuenta_corriente"} for m in cuenta["movimientos"]]
 
-    sin_cat = categorizer.categorize(movs, cfg, client, log, use_llm)
-    agg = analyzer.aggregate(movs, cuenta, tarjeta)
+    pendientes = categorizer.categorize(movs, cfg, client, log, use_llm, use_web=cfg.use_web, titular=cuenta and cuenta.get("titular"))
+    if preguntar and pendientes:
+        if categorizer.es_interactivo():
+            categorizer.preguntar(cfg, pendientes, movs)
+            pendientes = []
+        else:
+            print("AVISO: --preguntar requiere una terminal interactiva; las dudas quedan en data/pendientes.json.")
+    agg = analyzer.aggregate(movs, cuenta, tarjeta, pendientes)
 
-    # Periodo = mes del estado de cuenta de la tarjeta (o de la cuenta corriente)
     if tarjeta and tarjeta["fecha_estado"]:
         periodo_iso = tarjeta["fecha_estado"][:7]
+    elif cuenta:
+        periodo_iso = cuenta.get("periodo") or max(m["fecha"] for m in movs)[:7]
     else:
         periodo_iso = max(m["fecha"] for m in movs)[:7]
     meta = {"periodo": periodo_iso, "moneda": "CLP",
-            "banco": " + ".join(filter(None, [cuenta and cuenta["banco"], tarjeta and f"Tarjeta {tarjeta['tarjeta']}"]))}
+            "banco": " + ".join(filter(None, [cuenta and f"Cuenta corriente {cuenta['banco']}", tarjeta and f"Tarjeta {tarjeta['tarjeta']}"]))}
     insights = analyzer.generate_insights(client, cfg, log, meta, agg) if use_llm else analyzer.basic_insights(agg)
 
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
@@ -55,8 +79,9 @@ def run(cuenta_pdf: Path | None, tarjeta_xls: Path | None, cfg: Config, send: bo
     print(f"Ingresos {agg['ingresos']:,.0f} | Gastos {agg['gastos']:,.0f} (cuenta {agg['gastos_cuenta_corriente']:,.0f} + tarjeta {agg['gastos_tarjeta']:,.0f})")
     for k, v in agg["conciliacion"].items():
         print(f"Conciliacion {k}: {'OK' if not v else f'DIFERENCIA {v:,.0f} -> revisar extraccion'}")
-    if sin_cat:
-        print(f"{len(sin_cat)} comercios sin categoria (agregalos a reglas_categorias.json): {sin_cat[:10]}")
+    if pendientes:
+        print(f"{len(pendientes)} clasificaciones con duda (total ${sum(p['total'] for p in pendientes):,.0f}). "
+              "Responde con: python -m reporte.clasificar")
     print(log.summary(cfg))
 
     if send:
@@ -72,7 +97,8 @@ def main() -> None:
     ap.add_argument("--cuenta", type=Path, help="PDF de cuenta corriente (local)")
     ap.add_argument("--tarjeta", type=Path, help="XLS de tarjeta de credito (local)")
     ap.add_argument("--no-send", action="store_true")
-    ap.add_argument("--sin-llm", action="store_true", help="Solo reglas y parser, costo $0")
+    ap.add_argument("--sin-llm", action="store_true", help="Solo reglas, BBDD y parser: costo $0")
+    ap.add_argument("--preguntar", action="store_true", help="Pregunta por consola las clasificaciones dudosas")
     args = ap.parse_args()
     cfg = Config()
     cuenta, tarjeta = args.cuenta, args.tarjeta
@@ -81,7 +107,7 @@ def main() -> None:
 
         cuenta = gmail_client.download_statement(cfg, cfg.output_dir / "inbox", cfg.gmail_query_cuenta, (".pdf",))
         tarjeta = gmail_client.download_statement(cfg, cfg.output_dir / "inbox", cfg.gmail_query_tarjeta, (".xls", ".xlsx"))
-    run(cuenta, tarjeta, cfg, send=not args.no_send, use_llm=not args.sin_llm)
+    run(cuenta, tarjeta, cfg, send=not args.no_send, use_llm=not args.sin_llm, preguntar=args.preguntar)
 
 
 if __name__ == "__main__":

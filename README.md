@@ -7,20 +7,29 @@ Agente que toma tus cartolas (cuenta corriente en PDF y tarjeta de crédito en X
 
 ## Flujo
 
-Dos fuentes, dos caminos (el objetivo es gastar el mínimo de tokens):
+Ambas cartolas se leen **con código, sin IA** (costo $0) y se validan contra los totales que declara el propio banco:
 
-| Fuente | Cómo se lee | Costo de LLM |
+| Fuente | Lectura | Validación |
 |---|---|---|
-| Tarjeta de crédito (`.xls` Scotiabank) | Parser determinista (`card_parser.py`); cuadra al peso con el "Monto Total Facturado" del banco | $0 |
-| Cuenta corriente (`.pdf`) | Texto del PDF → Claude Sonnet 5.5 (esfuerzo `low`) | 1 llamada |
-| Categorías | 1) reglas por palabra clave (`reglas_categorias.json`), 2) caché de comercios ya vistos (`data/merchant_cache.json`), 3) una sola llamada a Claude con lo que quede | casi $0 desde el 2º mes |
-| Insights | Una llamada con solo los agregados (no la cartola) | 1 llamada corta |
+| Tarjeta (`.xls` Scotiabank) | `card_parser.py` | suma de cargos = "Monto Total Facturado" |
+| Cuenta corriente (`.pdf`, con clave) | `account_parser.py`: el signo sale de la variación del saldo | abonos, cargos y saldo final = los declarados |
 
-Decisiones que evitan errores:
-- El **pago de la tarjeta** desde la cuenta corriente se excluye de los gastos (si no, se contaría dos veces).
-- Las **notas de crédito** restan del gasto; no cuentan como ingreso.
-- Los totales se calculan en Python; el modelo nunca suma.
-- Cada ejecución imprime tokens y costo estimado por llamada.
+Si el formato cambia o algo no cuadra, el agente usa Claude como respaldo para extraer la cuenta corriente.
+
+### Clasificación que aprende
+
+Cada comercio se clasifica **una vez** y queda en la BBDD (`data/clasificaciones.db`, SQLite). Escalera, se detiene en el primer paso que resuelve:
+
+1. **Lo que tú confirmaste** (fuente `usuario`): siempre manda, incluso sobre las reglas.
+2. **Reglas** por palabra clave (`reglas_categorias.json`, editable).
+3. **BBDD** con clasificaciones previas de IA/web de confianza alta.
+4. **IA** (Sonnet 5.5, un solo llamado por lote): devuelve categoría y confianza 0–1.
+5. **Búsqueda web** solo para lo que la IA dejó con confianza < 0.8 (se envían únicamente nombres de comercio).
+6. **Te pregunta** lo que sigue dudoso y pesa (monto acumulado ≥ `REPORTE_ASK_MIN`). Tu respuesta se guarda y no se vuelve a preguntar.
+
+Las transferencias a personas (TEF) se identifican por RUT y **no** se envían a IA ni web. Si el nombre coincide con el titular de la cuenta, se sugiere "Transferencia propia (interno)" para que no cuenten como ingreso/gasto.
+
+Otras decisiones: el pago de la tarjeta desde la cuenta corriente se excluye del gasto (evita contarlo dos veces); las notas de crédito restan del gasto; los totales los calcula Python, el modelo nunca suma. Cada ejecución imprime tokens y costo estimado por llamada.
 
 ## Pruebas locales
 
@@ -35,8 +44,14 @@ PYTHONPATH=src python -m reporte.main --tarjeta entrada/tarjeta.xls --sin-llm --
 # 2) Solo tarjeta con LLM (categoriza comercios desconocidos + insights)
 PYTHONPATH=src python -m reporte.main --tarjeta entrada/tarjeta.xls --no-send
 
-# 3) Ambas cartolas
+# 3) Ambas cartolas (la clave del PDF va en PDF_PASSWORD, en tu .env)
 PYTHONPATH=src python -m reporte.main --cuenta entrada/cartola.pdf --tarjeta entrada/tarjeta.xls --no-send
+
+# 4) Igual, pero te consulta por consola las clasificaciones dudosas (y las aprende)
+PYTHONPATH=src python -m reporte.main --cuenta entrada/cartola.pdf --tarjeta entrada/tarjeta.xls --no-send --preguntar
+
+# Responder las dudas que quedaron pendientes en una ejecucion anterior
+PYTHONPATH=src python -m reporte.clasificar
 ```
 
 Salidas: `output/reporte-AAAA-MM.pdf` y `data/AAAA-MM/` (movimientos y resumen normalizados, base para tendencias y presupuesto).
@@ -49,7 +64,7 @@ En Google Cloud crea credenciales OAuth tipo "Aplicación de escritorio", habili
 
 ## Privacidad
 
-La cartola de la cuenta corriente se envía a la API de Anthropic para analizarla (la de tarjeta no: se lee con código; solo los nombres de comercios desconocidos y los agregados van al modelo). `credentials.json`, `token.json`, `.env`, `output/`, `data/` y `entrada/` están en `.gitignore`: no subas cartolas reales al repositorio.
+Las cartolas se leen localmente. A la API de Anthropic solo van los nombres de comercios desconocidos (sin RUT ni personas) y los totales agregados para redactar el análisis; la cartola completa solo se envía si el parser falla y se usa el respaldo con IA. `credentials.json`, `token.json`, `.env`, `output/`, `data/` y `entrada/` están en `.gitignore`: no subas cartolas reales al repositorio.
 
 ## Pruebas
 

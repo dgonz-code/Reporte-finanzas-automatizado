@@ -16,6 +16,9 @@ class Config:
     price_in: float = float(os.getenv("PRICE_IN_PER_MTOK", "2.0"))
     price_out: float = float(os.getenv("PRICE_OUT_PER_MTOK", "10.0"))
 
+    use_web: bool = os.getenv("REPORTE_WEB", "1") == "1"  # busqueda web para comercios dudosos
+    ask_min_amount: float = float(os.getenv("REPORTE_ASK_MIN", "20000"))  # no te preguntes por montos menores
+
     gmail_query_cuenta: str = os.getenv("GMAIL_QUERY_CUENTA", "has:attachment filename:pdf newer_than:35d")
     gmail_query_tarjeta: str = os.getenv("GMAIL_QUERY_TARJETA", "has:attachment filename:xls newer_than:35d")
     pdf_password: str | None = os.getenv("PDF_PASSWORD") or None

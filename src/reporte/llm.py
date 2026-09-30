@@ -49,3 +49,23 @@ def ask(client: anthropic.Anthropic, cfg: Config, log: UsageLog, label: str,
     if msg.stop_reason == "max_tokens":
         raise RuntimeError(f"Respuesta truncada en '{label}'. Sube max_tokens o divide la entrada.")
     return json.loads(next(b.text for b in msg.content if b.type == "text"))
+
+
+def ask_web(client: anthropic.Anthropic, cfg: Config, log: UsageLog, label: str, prompt: str, max_uses: int = 5) -> str | None:
+    """Pregunta con la herramienta de busqueda web de Anthropic. Devuelve el texto final o None si falla."""
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        for _ in range(4):  # la busqueda del servidor puede pausar el turno (pause_turn)
+            msg = client.messages.create(
+                model=cfg.model, max_tokens=4000,
+                tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": max_uses}],
+                output_config={"effort": cfg.effort}, messages=messages,
+            )
+            log.add(label, msg.usage)
+            if msg.stop_reason != "pause_turn":
+                break
+            messages = [messages[0], {"role": "assistant", "content": msg.content}]
+        return "".join(b.text for b in msg.content if b.type == "text")
+    except anthropic.APIError as e:  # busqueda no habilitada en la organizacion, limite, etc.
+        print(f"AVISO: la busqueda web no esta disponible ({type(e).__name__}); se sigue sin ella.")
+        return None

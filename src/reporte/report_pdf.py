@@ -103,6 +103,18 @@ def build_pdf(path: Path, data: dict, agg: dict, insights: dict) -> None:
     if agg.get("sin_categorizar"):
         e += [Spacer(1, 10), Paragraph(f"{agg['sin_categorizar']} movimientos quedaron sin categoria ('Otros'). Agrega reglas en reglas_categorias.json.", ss["Italic"])]
 
+    if agg.get("pendientes"):
+        e += [Spacer(1, 14), Paragraph("Clasificaciones por confirmar", ss["Heading2"]),
+              Paragraph("No tuve certeza en estos casos. Confirmalos con <b>python -m reporte.clasificar</b>; "
+                        "la respuesta queda guardada y no se vuelve a preguntar.", ss["BodyText"])]
+        rows = [["Descripcion", "Sugerida", "Monto"]] + [
+            [Paragraph(html.escape(p["ejemplo"]), ss["BodyText"]), Paragraph(html.escape(p["sugerida"]), ss["BodyText"]), clp(p["total"], m)]
+            for p in agg["pendientes"][:15]
+        ]
+        tp = Table(rows, colWidths=[7 * cm, 6 * cm, 4 * cm], repeatRows=1)
+        tp.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.3, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey), ("ALIGN", (2, 0), (2, -1), "RIGHT")]))
+        e.append(tp)
+
     doc.build(e)
 
 
@@ -119,4 +131,5 @@ def build_email_html(data: dict, agg: dict, insights: dict) -> str:
 <h3>Principales hallazgos</h3><ul>{li(insights['hallazgos'])}</ul>
 {'<h3>Alertas</h3><ul>' + li(insights['alertas']) + '</ul>' if insights['alertas'] else ''}
 <h3>Top 5 categorias de gasto</h3><table cellpadding='4'>{cats}</table>
+{('<p><b>' + str(len(agg['pendientes'])) + ' clasificaciones con duda</b> por confirmar (detalle en el PDF).</p>') if agg.get('pendientes') else ''}
 <p>El analisis detallado va en el PDF adjunto.</p>"""
