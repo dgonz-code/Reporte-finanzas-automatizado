@@ -31,13 +31,13 @@ def _service(cfg: Config):
     return build("gmail", "v1", credentials=creds)
 
 
-def download_statements(cfg: Config, dest: Path) -> list[Path]:
-    """Descarga los PDF del correo mas reciente que calce con GMAIL_QUERY."""
+def download_statement(cfg: Config, dest: Path, query: str, exts: tuple[str, ...]) -> Path:
+    """Descarga el primer adjunto con alguna de las extensiones, del correo mas reciente que calce con query."""
     svc = _service(cfg)
-    res = svc.users().messages().list(userId="me", q=cfg.gmail_query, maxResults=5).execute()
+    res = svc.users().messages().list(userId="me", q=query, maxResults=5).execute()
     msgs = res.get("messages", [])
     if not msgs:
-        raise SystemExit(f"No se encontraron correos con la busqueda: {cfg.gmail_query}")
+        raise SystemExit(f"No se encontraron correos con la busqueda: {query}")
 
     dest.mkdir(parents=True, exist_ok=True)
     msg = svc.users().messages().get(userId="me", id=msgs[0]["id"]).execute()
@@ -50,7 +50,7 @@ def download_statements(cfg: Config, dest: Path) -> list[Path]:
 
     for part in walk(msg["payload"]):
         name = part.get("filename", "")
-        if not name.lower().endswith(".pdf"):
+        if not name.lower().endswith(exts):
             continue
         body = part["body"]
         if "attachmentId" in body:
@@ -63,8 +63,8 @@ def download_statements(cfg: Config, dest: Path) -> list[Path]:
         path.write_bytes(base64.urlsafe_b64decode(data))
         saved.append(path)
     if not saved:
-        raise SystemExit("El correo encontrado no tiene PDF adjuntos.")
-    return saved
+        raise SystemExit(f"El correo encontrado no tiene adjuntos {exts}.")
+    return saved[0]
 
 
 def send_report(cfg: Config, subject: str, body_html: str, attachment: Path) -> None:

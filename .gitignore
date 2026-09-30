@@ -6,3 +6,5 @@ token.json
 output/
 .venv/
 .pytest_cache/
+data/
+entrada/

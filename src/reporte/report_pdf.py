@@ -49,7 +49,9 @@ def build_pdf(path: Path, data: dict, agg: dict, insights: dict) -> None:
 
     kpis = [
         ["Ingresos", clp(agg["ingresos"], m)],
-        ["Gastos", clp(agg["gastos"], m)],
+        ["Gastos totales", clp(agg["gastos"], m)],
+        ["  · en cuenta corriente", clp(agg["gastos_cuenta_corriente"], m)],
+        ["  · en tarjeta de credito", clp(agg["gastos_tarjeta"], m)],
         ["Balance del mes", clp(agg["balance"], m)],
         ["Tasa de ahorro", f"{agg['tasa_ahorro']:.0%}" if agg["tasa_ahorro"] is not None else "n/d"],
         ["Movimientos", str(agg["n_movimientos"])],
@@ -91,6 +93,16 @@ def build_pdf(path: Path, data: dict, agg: dict, insights: dict) -> None:
         tr.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.3, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey), ("ALIGN", (1, 0), (-1, -1), "RIGHT")]))
         e.append(tr)
 
+    if agg.get("cuotas_por_vencer"):
+        e += [Spacer(1, 14), Paragraph("Compromisos de tarjeta por vencer", ss["Heading2"])]
+        rows = [["Mes", "Monto"]] + [[k.capitalize(), clp(v, m)] for k, v in agg["cuotas_por_vencer"].items() if v is not None]
+        tv = Table(rows, colWidths=[6 * cm, 5 * cm])
+        tv.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.3, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey), ("ALIGN", (1, 0), (1, -1), "RIGHT")]))
+        e.append(tv)
+
+    if agg.get("sin_categorizar"):
+        e += [Spacer(1, 10), Paragraph(f"{agg['sin_categorizar']} movimientos quedaron sin categoria ('Otros'). Agrega reglas en reglas_categorias.json.", ss["Italic"])]
+
     doc.build(e)
 
 
@@ -103,7 +115,7 @@ def build_email_html(data: dict, agg: dict, insights: dict) -> str:
     )
     return f"""<h2>Reporte financiero - {html.escape(data['periodo'])}</h2>
 <p>{html.escape(insights['resumen_ejecutivo'])}</p>
-<p><b>Ingresos:</b> {clp(agg['ingresos'], m)} &nbsp; <b>Gastos:</b> {clp(agg['gastos'], m)} &nbsp; <b>Balance:</b> {clp(agg['balance'], m)}</p>
+<p><b>Ingresos:</b> {clp(agg['ingresos'], m)} &nbsp; <b>Gastos:</b> {clp(agg['gastos'], m)} (cuenta cte {clp(agg['gastos_cuenta_corriente'], m)} + tarjeta {clp(agg['gastos_tarjeta'], m)}) &nbsp; <b>Balance:</b> {clp(agg['balance'], m)}</p>
 <h3>Principales hallazgos</h3><ul>{li(insights['hallazgos'])}</ul>
 {'<h3>Alertas</h3><ul>' + li(insights['alertas']) + '</ul>' if insights['alertas'] else ''}
 <h3>Top 5 categorias de gasto</h3><table cellpadding='4'>{cats}</table>
