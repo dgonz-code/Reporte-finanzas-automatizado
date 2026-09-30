@@ -22,5 +22,6 @@ jobs:
         env:
           PYTHONPATH: src
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GMAIL_QUERY: ${{ secrets.GMAIL_QUERY }}
+          GMAIL_QUERY_CUENTA: ${{ secrets.GMAIL_QUERY_CUENTA }}
+          GMAIL_QUERY_TARJETA: ${{ secrets.GMAIL_QUERY_TARJETA }}
           PDF_PASSWORD: ${{ secrets.PDF_PASSWORD }}
